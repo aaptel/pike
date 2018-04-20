@@ -659,7 +659,7 @@ class Connection(transport.Transport):
         if self not in self.client._connections:
             return
 
-        super(Connection, self).close()
+        #super(Connection, self).close()
 
         if self.remote_addr is not None:
             self.client.logger.debug("disconnect (%s/%s -> %s/%s): %s",
@@ -732,10 +732,11 @@ class Connection(transport.Transport):
                                              self.remote_addr[0], self.remote_addr[1],
                                              req.parent)
                 else:
-                    self.client.logger.debug('send (%s/%s -> %s/%s): %s',
-                                             self.local_addr[0], self.local_addr[1],
-                                             self.remote_addr[0], self.remote_addr[1],
-                                             ', '.join(f[0].__class__.__name__ for f in req.parent))
+                    pass
+                    # self.client.logger.debug('send (%s/%s -> %s/%s): %s',
+                    #                          self.local_addr[0], self.local_addr[1],
+                    #                          self.remote_addr[0], self.remote_addr[1],
+                    #                         ', '.join(f[0].__class__.__name__ for f in req.parent))
             else:
                 # Not ready to send chain
                 result = None
