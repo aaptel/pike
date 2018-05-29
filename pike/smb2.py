@@ -459,6 +459,7 @@ GlobalCaps.import_items(globals())
 class NegotiateContextType(core.ValueEnum):
     SMB2_PREAUTH_INTEGRITY_CAPABILITIES = 0x0001
     SMB2_ENCRYPTION_CAPABILITIES = 0x0002
+    SMB2_POSIX_CAPABILITIES = 0x0100
 
 NegotiateContextType.import_items(globals())
 
@@ -638,6 +639,29 @@ class PreauthIntegrityCapabilitiesResponse(NegotiateResponseContext,
     def __init__(self, parent):
         NegotiateResponseContext.__init__(self, parent)
         PreauthIntegrityCapabilities.__init__(self)
+
+class POSIXCapabilities(core.Frame):
+    context_type = SMB2_POSIX_CAPABILITIES
+    def __init__(self):
+        self.data = None
+    def _encode(self, cur):
+        if self.data is None:
+            self.data = b'\x00\x00\x00\x00'
+        cur.encode_bytes(self.data)
+    def _decode(self, cur):
+        self.data = cur.decode_bytes(4) # TODO: use container length
+
+class POSIXCapabilitiesRequest(NegotiateRequestContext,
+                               POSIXCapabilities):
+    def __init__(self, parent):
+        NegotiateRequestContext.__init__(self, parent)
+        POSIXCapabilities.__init__(self)
+
+class POSIXCapabilitiesResponse(NegotiateResponseContext,
+                                POSIXCapabilities):
+    def __init__(self, parent):
+        NegotiateResponseContext.__init__(self, parent)
+        POSIXCapabilities.__init__(self)
 
 # Session setup constants
 class SessionFlags(core.FlagEnum):
@@ -1210,6 +1234,50 @@ class ExtendedAttributeRequest(CreateRequestContext):
             cur.encode_bytes(self.ea_name)
             cur.encode_bytes(self.ea_value)
 
+# POSIX permission bits
+class POSIXMode(core.FlagEnum):
+    UNIX_X_OTH   = 0o0001
+    UNIX_W_OTH   = 0o0002
+    UNIX_R_OTH   = 0o0004
+    UNIX_X_GRP   = 0o0010
+    UNIX_W_GRP   = 0o0020
+    UNIX_R_GRP   = 0o0040
+    UNIX_X_USR   = 0o0100
+    UNIX_W_USR   = 0o0200
+    UNIX_R_USR   = 0o0400
+    UNIX_STICKY  = 0o1000
+    UNIX_SET_GID = 0o2000
+    UNIX_SET_UID = 0o4000
+
+class POSIXRequest(CreateRequestContext):
+    name = b"\x93\xAD\x25\x50\x9C\xB4\x11\xE7\xB4\x23\x83\xDE\x96\x8B\xCD\x7C"
+
+    def __init__(self,parent):
+        CreateRequestContext.__init__(self,parent)
+        self.perms = 0
+
+    def _encode(self,cur):
+        cur.encode_uint32le(self.perms)
+
+class POSIXResponse(CreateResponseContext):
+    name = b"\x93\xAD\x25\x50\x9C\xB4\x11\xE7\xB4\x23\x83\xDE\x96\x8B\xCD\x7C"
+
+    def __init__(self, parent):
+        CreateResponseContext.__init__(self, parent)
+        self.nlink = 0
+        self.reparse_tag = 0
+        self.perms = 0
+        self.owner_sid = {}
+        self.group_sid = {}
+
+
+    def _decode(self, cur):
+        self.nlink = cur.decode_uint32le()
+        self.reparse_tag = cur.decode_uint32le()
+        self.perms = POSIXMode(cur.decode_uint32le())
+        self.owner_sid = decode_sid(cur)
+        self.group_sid = decode_sid(cur)
+
 class LeaseState(core.FlagEnum):
     SMB2_LEASE_NONE           = 0x00
     SMB2_LEASE_READ_CACHING   = 0x01
@@ -1695,6 +1763,7 @@ class FileInformationClass(core.ValueEnum):
     FILE_ID_BOTH_DIR_INFORMATION = 37
     FILE_ID_FULL_DIR_INFORMATION = 38
     FILE_VALID_DATA_LENGTH_INFORMATION = 39
+    FILE_POSIX_INFORMATION = 0x64
 
 FileInformationClass.import_items(globals())
 
@@ -1710,7 +1779,6 @@ class FileSystemInformationClass(core.ValueEnum):
     FILE_FS_SECTOR_SIZE_INFORMATION = 11
 
 FileSystemInformationClass.import_items(globals())
-
 
 class QueryDirectoryRequest(Request):
     command_id = SMB2_QUERY_DIRECTORY
@@ -2686,6 +2754,70 @@ class FileFsObjectIdInformation(FileSystemInformation):
         for count in xrange(6):
             self.extended_info += str(cur.decode_uint64le())
 
+def decode_sid(cur):
+    rev = cur.decode_uint8le()
+    num = cur.decode_uint8le()
+    id_auth = cur.decode_bytes(6)
+    auths = []
+    for x in range(num):
+        auths.append(cur.decode_uint32le())
+    return {'rev':rev, 'id_auth':id_auth, 'auths':auths}
+
+
+class FilePOSIXInformation(FileInformation):
+    file_information_class = FILE_POSIX_INFORMATION
+
+    def __init__(self, parent = None):
+        FileInformation.__init__(self, parent)
+        self._is_qdr = isinstance(parent, QueryDirectoryResponse)
+        self.parent = parent
+        self.creation_time = 0
+        self.last_access_time = 0
+        self.last_write_time = 0
+        self.change_time = 0
+        self.allocation_size = 0
+        self.end_of_file = 0
+        self.file_attributes = 0
+        self.file_index = 0
+        self.dev = 0
+        self.zero = 0
+        self.nlink = 0
+        self.reparse_tag = 0
+        self.perms = 0
+        self.owner_sid = {}
+        self.group_sid = {}
+        self.file_name = None
+
+    def _decode(self, cur):
+        if self._is_qdr:
+            next_offset = cur.decode_uint32le()
+            ignored = cur.decode_uint32le()
+
+        self.creation_time = nttime.NtTime(cur.decode_uint64le())
+        self.last_access_time = nttime.NtTime(cur.decode_uint64le())
+        self.last_write_time = nttime.NtTime(cur.decode_uint64le())
+        self.change_time = nttime.NtTime(cur.decode_uint64le())
+        self.allocation_size = cur.decode_uint64le()
+        self.end_of_file = cur.decode_uint64le()
+        self.file_attributes = FileAttributes(cur.decode_uint32le())
+        self.file_index = cur.decode_uint64le()
+        self.dev = cur.decode_uint32le()
+        self.zero = cur.decode_uint32le()
+        self.nlink = cur.decode_uint32le()
+        self.reparse_tag = cur.decode_uint32le()
+        self.perms = POSIXMode(cur.decode_uint32le())
+        self.owner_sid = decode_sid(cur)
+        self.group_sid = decode_sid(cur)
+
+        if self._is_qdr:
+            file_name_length = cur.decode_uint32le()
+            self.file_name = cur.decode_utf16le(file_name_length)
+
+            if next_offset:
+                cur.advanceto(self.start + next_offset)
+            else:
+                cur.advanceto(cur.upperbound)
+
 class CompletionFilter(core.FlagEnum):
     SMB2_NOTIFY_CHANGE_FILE_NAME    = 0x001
     SMB2_NOTIFY_CHANGE_DIR_NAME     = 0x002
@@ -3463,4 +3595,3 @@ class EnumerateSnapshotsResponse(IoctlOutput):
         snapshot_buffer = cur.decode_utf16le(self.snapshot_array_size)
         # TODO: handle the case where the buffer is too small
         self.snapshots = snapshot_buffer.strip("\0").split("\0")
-

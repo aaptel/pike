@@ -853,7 +853,7 @@ class Connection(transport.Transport):
         """
         return map(Future.result, self.submit(req))
 
-    def negotiate_request(self, hash_algorithms=None, salt=None, ciphers=None):
+    def negotiate_request(self, hash_algorithms=None, salt=None, ciphers=None, posix=None):
         smb_req = self.request()
         smb_req.credit_charge = 0       # negotiate requests are free
         neg_req = smb2.NegotiateRequest(smb_req)
@@ -880,6 +880,10 @@ class Connection(transport.Transport):
             else:
                 preauth_integrity_req.salt = array.array('B',
                     map(random.randint, [0]*32, [255]*32))
+
+            if posix:
+                posix_req = smb2.POSIXCapabilitiesRequest(neg_req)
+
         self._negotiate_request = neg_req
         return neg_req
 
@@ -890,7 +894,7 @@ class Connection(transport.Transport):
         negotiate_future.then(assign_response)
         return negotiate_future
 
-    def negotiate(self, hash_algorithms=None, salt=None, ciphers=None):
+    def negotiate(self, hash_algorithms=None, salt=None, ciphers=None, posix=None):
         """
         Perform dialect negotiation.
 
@@ -901,9 +905,15 @@ class Connection(transport.Transport):
                 self.negotiate_request(
                     hash_algorithms,
                     salt,
-                    ciphers
+                    ciphers,
+                    posix
         )).result()
         return self
+
+    def is_posix_capable(self):
+        req_ok = smb2.SMB2_POSIX_CAPABILITIES in [ctx.context_type for ctx in self._negotiate_request]
+        rsp_ok = smb2.SMB2_POSIX_CAPABILITIES in [ctx.context_type for ctx in self._negotiate_response]
+        return req_ok and rsp_ok
 
     class SessionSetupContext(object):
         def __init__(self, conn, creds=None, bind=None, resume=None,
@@ -1302,7 +1312,8 @@ class Channel(object):
             app_instance_id=None,
             query_on_disk_id=False,
             extended_attributes=None,
-            timewarp=None):
+            timewarp=None,
+            posix_perms=None):
 
         prev_open = None
 
@@ -1374,6 +1385,10 @@ class Channel(object):
             timewarp_req = smb2.TimewarpTokenRequest(create_req)
             timewarp_req.timestamp = nttime.NtTime(timewarp)
 
+        if posix_perms:
+            posix_req = smb2.POSIXRequest(create_req)
+            posix_req.perms = posix_perms
+
         open_future = Future(None)
         def finish(f):
             with open_future: open_future(
@@ -1414,7 +1429,8 @@ class Channel(object):
             app_instance_id=None,
             query_on_disk_id=False,
             extended_attributes=None,
-            timewarp=None):
+            timewarp=None,
+            posix_perms=None):
         return self.create_submit(self.create_request(
                 tree,
                 path,
@@ -1433,7 +1449,8 @@ class Channel(object):
                 app_instance_id,
                 query_on_disk_id,
                 extended_attributes,
-                timewarp))
+                timewarp,
+                posix_perms))
 
     def close_request(self, handle):
         smb_req = self.request(obj=handle)
