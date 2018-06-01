@@ -1385,7 +1385,7 @@ class Channel(object):
             timewarp_req = smb2.TimewarpTokenRequest(create_req)
             timewarp_req.timestamp = nttime.NtTime(timewarp)
 
-        if posix_perms:
+        if posix_perms is not None:
             posix_req = smb2.POSIXRequest(create_req)
             posix_req.perms = posix_perms
 
