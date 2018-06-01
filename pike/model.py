@@ -598,9 +598,10 @@ class Connection(transport.Transport):
             self.local_addr = self.socket.getsockname()
             self.remote_addr = self.socket.getpeername()
 
-            self.client.logger.debug('connect: %s/%s -> %s/%s',
-                                     self.local_addr[0], self.local_addr[1],
-                                     self.remote_addr[0], self.remote_addr[1])
+            self.client.logger.debug('connect: %s -> %s',
+                                     (self.local_addr and '%s/%s'%(self.local_addr[0], self.local_addr[1]) or 'local_addr=None'),
+                                     (self.remote_addr and '%s/%s'%(self.remote_addr[0], self.remote_addr[1]) or 'remote_addr=None'))
+
         self.connection_future(self)
 
     def handle_read(self):
@@ -726,15 +727,14 @@ class Connection(transport.Transport):
                 # Last command in chain, ready to send packet
                 result = req.parent.serialize()
                 self.process_callbacks(EV_REQ_POST_SERIALIZE, req.parent)
+                xfer = '%s -> %s'%(
+                    (self.local_addr and '%s/%s'%(self.local_addr[0], self.local_addr[1]) or 'local_addr=None'),
+                    (self.remote_addr and '%s/%s'%(self.remote_addr[0], self.remote_addr[1]) or 'remote_addr=None')
+                )
                 if trace:
-                    self.client.logger.debug('send (%s/%s -> %s/%s): %s',
-                                             self.local_addr[0], self.local_addr[1],
-                                             self.remote_addr[0], self.remote_addr[1],
-                                             req.parent)
+                    self.client.logger.debug('send (%s): %s', xfer, req.parent)
                 else:
-                    self.client.logger.debug('send (%s/%s -> %s/%s): %s',
-                                             self.local_addr[0], self.local_addr[1],
-                                             self.remote_addr[0], self.remote_addr[1],
+                    self.client.logger.debug('send (%s): %s', xfer,
                                              ', '.join(f[0].__class__.__name__ for f in req.parent))
             else:
                 # Not ready to send chain
