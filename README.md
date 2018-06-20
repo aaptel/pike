@@ -29,6 +29,37 @@ Ubuntu 14.04 / 16.04
     pip install setuptools pycryptodomex
     python setup.py install
 
+Running POSIX tests
+===================
+
+Create /tmp/share:
+
+    mkdir /tmp/share
+
+Set your samba smb.conf to:
+
+    [global]
+    server max protocol = SMB3_11
+    unix extensions = yes
+    
+    [share]
+    create mask = 07777
+    directory mask = 07777
+    mangled names = no
+    path = /tmp/share
+    read only = no
+    guest ok = yes
+
+- Edit test.sh with your server info.
+- Empty the content of the share and run test.sh
+
+    # run all POSIX tests
+    rm -rf /tmp/share/* ; ./test.sh
+
+    # run a single test (look in pike/test/posixext.py for names)
+    rm -rf /tmp/share/* ; ./test.sh POSIXTest.test_reserved_char
+
+
 Running tests
 =============
 

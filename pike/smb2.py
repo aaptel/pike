@@ -2754,22 +2754,33 @@ class FileFsObjectIdInformation(FileSystemInformation):
         for count in xrange(6):
             self.extended_info += str(cur.decode_uint64le())
 
-def decode_sid(cur):
+def decode_sid(cur, fixed=False):
+    off = cur.copy()
     rev = cur.decode_uint8le()
     num = cur.decode_uint8le()
     id_auth = cur.decode_bytes(6)
     auths = []
     for x in range(num):
         auths.append(cur.decode_uint32le())
+    if fixed:
+        cur.seekto(off+28)
     return {'rev':rev, 'id_auth':id_auth, 'auths':auths}
 
+def parent_list(x):
+    r = []
+    try:
+        while True:
+            r.append(x.__class__)
+            x = x.parent
+    except:
+        pass
+    return r
 
 class FilePOSIXInformation(FileInformation):
     file_information_class = FILE_POSIX_INFORMATION
 
     def __init__(self, parent = None):
         FileInformation.__init__(self, parent)
-        self._is_qdr = isinstance(parent, QueryDirectoryResponse)
         self.parent = parent
         self.creation_time = 0
         self.last_access_time = 0
@@ -2787,6 +2798,8 @@ class FilePOSIXInformation(FileInformation):
         self.owner_sid = {}
         self.group_sid = {}
         self.file_name = None
+        self._is_qdr = QueryDirectoryResponse in parent_list(self)
+
 
     def _decode(self, cur):
         if self._is_qdr:
@@ -2806,8 +2819,8 @@ class FilePOSIXInformation(FileInformation):
         self.nlink = cur.decode_uint32le()
         self.reparse_tag = cur.decode_uint32le()
         self.perms = POSIXMode(cur.decode_uint32le())
-        self.owner_sid = decode_sid(cur)
-        self.group_sid = decode_sid(cur)
+        self.owner_sid = decode_sid(cur, fixed=True)
+        self.group_sid = decode_sid(cur, fixed=True)
 
         if self._is_qdr:
             file_name_length = cur.decode_uint32le()
