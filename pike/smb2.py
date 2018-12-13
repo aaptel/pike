@@ -2816,11 +2816,12 @@ class FilePOSIXInformation(FileInformation):
         self.file_index = cur.decode_uint64le()
         self.dev = cur.decode_uint32le()
         self.zero = cur.decode_uint32le()
+
         self.nlink = cur.decode_uint32le()
         self.reparse_tag = cur.decode_uint32le()
         self.perms = POSIXMode(cur.decode_uint32le())
-        self.owner_sid = decode_sid(cur, fixed=True)
-        self.group_sid = decode_sid(cur, fixed=True)
+        self.owner_sid = decode_sid(cur, fixed=False)
+        self.group_sid = decode_sid(cur, fixed=False)
 
         if self._is_qdr:
             file_name_length = cur.decode_uint32le()
