@@ -1801,6 +1801,58 @@ class Channel(object):
                     target_name,
                     flags).parent.parent)[0]
 
+    def _set_nfs_reparse(self, func, *args, **kwargs):
+        return self.connection.transceive(
+            func(*args, **kwargs).parent.parent)[0]
+
+
+    def _set_nfs_reparse_request(self, file, tag):
+        smb_req = self.request(obj=file.tree)
+        ioctl_req = smb2.IoctlRequest(smb_req)
+        set_reparse_req = smb2.SetReparsePointRequest(ioctl_req)
+        nfs_buffer = smb2.NFSReparseBuffer(set_reparse_req)
+
+        ioctl_req.max_output_response = 0
+        ioctl_req.file_id = file.file_id
+        ioctl_req.flags |= smb2.SMB2_0_IOCTL_IS_FSCTL
+        nfs_buffer.nfs_tag = tag
+        return (ioctl_req, nfs_buffer)
+
+    def set_nfs_block_request(self, file, major, minor):
+        ioctl_req, nfs_buffer = self._set_nfs_reparse_request(file, smb2.NFS_SPECFILE_BLK)
+        nfs_buffer.major = major
+        nfs_buffer.minor = minor
+        return ioctl_req
+    def set_nfs_block(self, file, major, minor):
+        return self._set_nfs_reparse(self.set_nfs_block_request, file, major, minor)
+
+    def set_nfs_char_request(self, file, major, minor):
+        ioctl_req, nfs_buffer = self._set_nfs_reparse_request(file, smb2.NFS_SPECFILE_CHR)
+        nfs_buffer.major = major
+        nfs_buffer.minor = minor
+        return ioctl_req
+    def set_nfs_char(self, file, major, minor):
+        return self._set_nfs_reparse(self.set_nfs_char_request, file, major, minor)
+
+    def set_nfs_symlink_request(self, file, target_name):
+        ioctl_req, nfs_buffer = self._set_nfs_reparse_request(file, smb2.NFS_SPECFILE_LNK)
+        nfs_buffer.target = target_name
+        return ioctl_req
+    def set_nfs_symlink(self, file, target):
+        return self._set_nfs_reparse(self.set_nfs_symlink_request, file, target)
+
+    def set_nfs_fifo_request(self, file):
+        ioctl_req, nfs_buffer = self._set_nfs_reparse_request(file, smb2.NFS_SPECFILE_FIFO)
+        return ioctl_req
+    def set_nfs_fifo(self, file):
+        return self._set_nfs_reparse(self.set_nfs_fifo_request, file)
+
+    def set_nfs_socket_request(self, file):
+        ioctl_req, nfs_buffer = self._set_nfs_reparse_request(file, smb2.NFS_SPECFILE_SOCK)
+        return ioctl_req
+    def set_nfs_socket(self, file):
+        return self._set_nfs_reparse(self.set_nfs_socket_request, file)
+
     def get_symlink_request(self, file):
         smb_req = self.request(obj=file.tree)
         ioctl_req = smb2.IoctlRequest(smb_req)

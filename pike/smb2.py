@@ -3257,6 +3257,15 @@ class IoctlCode(core.ValueEnum):
 
 IoctlCode.import_items(globals())
 
+class NFSReparseTag(core.ValueEnum):
+    NFS_SPECFILE_LNK  = 0x00000000014B4E4C
+    NFS_SPECFILE_CHR  = 0x0000000000524843
+    NFS_SPECFILE_BLK  = 0x00000000004B4C42
+    NFS_SPECFILE_FIFO = 0x000000004F464946
+    NFS_SPECFILE_SOCK = 0x000000004B434F53
+
+NFSReparseTag.import_items(globals())
+
 class IoctlFlags(core.FlagEnum):
     SMB2_0_IOCTL_IS_FSCTL = 0x00000001
 
@@ -3591,6 +3600,54 @@ class SymbolicLinkReparseBuffer(ReparseDataBuffer):
         self.substitute_name = cur.decode_utf16le(self.substitute_name_length)
         cur.seekto(buf_start + self.print_name_offset)
         self.print_name = cur.decode_utf16le(self.print_name_length)
+
+
+class NFSReparseBuffer(ReparseDataBuffer):
+    reparse_tag = 0x80000014
+
+    def __init__(self, parent):
+        super(NFSReparseBuffer, self).__init__(parent)
+        self.nfs_tag = 0
+        self.major = 0
+        self.minor = 0
+        self.target = ""
+
+    def _encode(self, cur):
+        cur.encode_uint32le(self.reparse_tag)
+        reparse_data_length_hole = cur.hole.encode_uint16le(0)
+        cur.encode_uint16le(0)      # reserved
+        reparse_data_len_start = cur.copy()
+
+        cur.encode_uint64le(self.nfs_tag)
+
+        if self.nfs_tag == NFS_SPECFILE_LNK:
+            cur.encode_utf16le(self.target)
+            cur.encode_uint16le(0)
+        elif self.nfs_tag in (NFS_SPECFILE_CHR, NFS_SPECFILE_BLK):
+            cur.encode_uint32le(self.major)
+            cur.encode_uint32le(self.minor)
+        elif self.nfs_tag in (NFS_SPECFILE_FIFO, NFS_SPECFILE_SOCK):
+            pass
+
+        reparse_data_length_hole(cur - reparse_data_len_start)
+
+    def _decode(self, cur):
+        reparse_data_length = cur.decode_uint16le()
+        self.reserved = cur.decode_uint16le()
+        self.nfs_tag = NFSReparseTag(cur.decode_uint64le())
+
+        if self.nfs_tag == NFS_SPECFILE_LNK:
+            max_size = cur.upperbound - cur
+            self.target = cur.decode_utf16le(max_size)
+            for i in range(len(self.target)):
+                if self.target[i] == u'\x00':
+                    self.target = self.target[:i]
+                    break
+        elif self.nfs_tag in (NFS_SPECFILE_CHR, NFS_SPECFILE_BLK):
+            self.major = cur.decode_uint32le()
+            self.minor = cur.decode_uint32le()
+        elif self.nfs_tag in (NFS_SPECFILE_FIFO, NFS_SPECFILE_SOCK):
+            pass
 
 class EnumerateSnapshotsResponse(IoctlOutput):
     ioctl_ctl_code = FSCTL_SRV_ENUMERATE_SNAPSHOTS

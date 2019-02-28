@@ -13,7 +13,21 @@ def get_posix_cc(resp):
             return cc
     return None
 
+def get_nfs(r):
+    return r[0][0][0]
+
 class POSIXTest(test.PikeTest):
+
+    def test_plugfest(self):
+        self.negotiate()
+        f = self.chan.create(self.tree,
+                             '\\:*<>?. ',
+                             access=ACCESS_ALL,
+                             share=SHARE_ALL,
+                             disposition=smb2.FILE_SUPERSEDE,
+                             posix_perms=0o1760).result()
+        self.chan.close(f)
+        r = self.list_dir("")
 
     def test_reserved_char(self):
         perms = 0o644
@@ -160,24 +174,113 @@ class POSIXTest(test.PikeTest):
         self.chan.close(d)
         return r
 
-    def delete_file(self, fn, perms=0):
+    def delete_file(self, fn, perms=0, reparse=False):
+        options = smb2.FILE_DELETE_ON_CLOSE
+        if reparse:
+            options |= smb2.FILE_OPEN_REPARSE_POINT
+        posix_perms = None
+        if self.is_posix:
+            posix_perms = perms
+
         f = self.chan.create(self.tree,
                              fn,
                              access=ACCESS_ALL,
                              share=SHARE_ALL,
                              disposition=smb2.FILE_OPEN,
-                             options=smb2.FILE_DELETE_ON_CLOSE,
-                             posix_perms=perms).result()
+                             options=options,
+                             posix_perms=posix_perms).result()
         self.chan.close(f)
+
+    def test_reparse(self):
+        self.negotiate(posix=False)
+
+        def create(fn):
+            opts = 0
+            opts |= smb2.FILE_DELETE_ON_CLOSE
+
+            # when opening existing file, getting reparse tags
+            # without this flag => STATUS_IO_REPARSE_TAG_NOT_HANDLED
+            #opts |= smb2.FILE_OPEN_REPARSE_POINT
+
+            return self.chan.create(self.tree,
+                                    fn,
+                                    disposition=smb2.FILE_CREATE,
+                                    access=ACCESS_ALL,
+                                    options=opts,
+            ).result()
+
+        def nfs_block(fn, major, minor):
+            f = create(fn)
+            try:
+                self.chan.set_nfs_block(f, major, minor)
+                b = get_nfs(self.chan.get_symlink(f))
+                self.assertEqual(b.nfs_tag, smb2.NFS_SPECFILE_BLK)
+                self.assertEqual(b.major, major)
+                self.assertEqual(b.minor, minor)
+            finally:
+                self.chan.close(f)
+
+        def nfs_char(fn, major, minor):
+            f = create(fn)
+            try:
+                self.chan.set_nfs_char(f, major, minor)
+                b = get_nfs(self.chan.get_symlink(f))
+                self.assertEqual(b.nfs_tag, smb2.NFS_SPECFILE_CHR)
+                self.assertEqual(b.major, major)
+                self.assertEqual(b.minor, minor)
+            finally:
+                self.chan.close(f)
+
+        def nfs_symlink(fn, target):
+            f = create(fn)
+            try:
+                self.chan.set_nfs_symlink(f, target)
+                b = get_nfs(self.chan.get_symlink(f))
+                self.assertEqual(b.nfs_tag, smb2.NFS_SPECFILE_LNK)
+                self.assertEqual(b.target, target)
+            finally:
+                self.chan.close(f)
+
+        def nfs_fifo(fn):
+            f = create(fn)
+            try:
+                self.chan.set_nfs_fifo(f)
+                b = get_nfs(self.chan.get_symlink(f))
+                self.assertEqual(b.nfs_tag, smb2.NFS_SPECFILE_FIFO)
+            finally:
+                self.chan.close(f)
+
+        def nfs_socket(fn):
+            f = create(fn)
+            try:
+                self.chan.set_nfs_socket(f)
+                b = get_nfs(self.chan.get_symlink(f))
+                self.assertEqual(b.nfs_tag, smb2.NFS_SPECFILE_SOCK)
+            finally:
+                self.chan.close(f)
+
+        nfs_symlink("spec\\nfs-symlink", "target")
+        nfs_symlink("spec\\nfs-symlink", "")
+        nfs_char("spec\\nfs-char", 0, 0)
+        nfs_char("spec\\nfs-char", 3, 4)
+        nfs_char("spec\\nfs-char", 0xffffffff, 0xffffffff)
+        nfs_block("spec\\nfs-block", 0, 0)
+        nfs_block("spec\\nfs-block", 1, 2)
+        nfs_block("spec\\nfs-block", 0xffffffff, 0xffffffff)
+        nfs_fifo("spec\\nfs-fifo")
+        nfs_socket("spec\\nfs-socket")
+
 
     def negotiate(self, *args, **kwds):
         self.client = model.Client(dialects=[smb2.DIALECT_SMB3_1_1])
         self.conn = self.client.connect(self.server, self.port)
-        kwds['posix'] = True
+        if 'posix' not in kwds:
+            kwds['posix'] = True
+        self.is_posix = kwds['posix']
         resp = self.conn.negotiate(*args, **kwds).negotiate_response
         if resp.dialect_revision < smb2.DIALECT_SMB3_1_1:
             self.skipTest("SMB3.1.1 required")
-        if smb2.SMB2_POSIX_CAPABILITIES not in [ctx.context_type for ctx in resp]            :
+        if kwds['posix'] and smb2.SMB2_POSIX_CAPABILITIES not in [ctx.context_type for ctx in resp]:
             self.skipTest("Server does not support POSIX extensions")
         self.chan = self.conn.session_setup(self.creds)
         self.tree = self.chan.tree_connect(self.share)
